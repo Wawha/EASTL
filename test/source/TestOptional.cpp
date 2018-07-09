@@ -25,6 +25,54 @@ bool operator==(const IntStruct& lhs, const IntStruct& rhs)
 
 
 /////////////////////////////////////////////////////////////////////////////
+struct trivial_test
+{
+	trivial_test() { constructor_ran = true; }
+	trivial_test(const trivial_test&) { constructor_ran = true; }
+	trivial_test(trivial_test&&) { constructor_ran = true; was_moved = true; }
+	trivial_test& operator =(const trivial_test&) { assignment_ran = true; return *this; }
+	trivial_test& operator =(trivial_test&&) { assignment_ran = true; was_moved = true; return *this; }
+	static bool constructor_ran;
+	static bool assignment_ran;
+	static bool was_moved;
+	static void reset()
+	{
+		constructor_ran = false;
+		assignment_ran = false;
+		was_moved = false;
+	}
+};
+bool trivial_test::constructor_ran = false;
+bool trivial_test::assignment_ran = false;
+bool trivial_test::was_moved = false;
+
+/////////////////////////////////////////////////////////////////////////////
+struct non_trivial_test
+{
+	non_trivial_test() { constructor_ran = true; }
+	non_trivial_test(const non_trivial_test&) { constructor_ran = true; }
+	non_trivial_test(non_trivial_test&&) { constructor_ran = true; was_moved = true; }
+	non_trivial_test& operator =(const non_trivial_test&) { assignment_ran = true; return *this; }
+	non_trivial_test& operator =(non_trivial_test&&) { assignment_ran = true; was_moved = true; return *this; }
+	virtual ~non_trivial_test() { destructor_ran = true; }
+	static bool destructor_ran;
+	static bool constructor_ran;
+	static bool assignment_ran;
+	static bool was_moved;
+	static void reset()
+	{
+		destructor_ran = false;
+		constructor_ran = false;
+		assignment_ran = false;
+		was_moved = false;
+	}
+};
+bool non_trivial_test::constructor_ran = false;
+bool non_trivial_test::assignment_ran = false;
+bool non_trivial_test::was_moved = false;
+bool non_trivial_test::destructor_ran = false;
+
+/////////////////////////////////////////////////////////////////////////////
 struct destructor_test
 {
 	~destructor_test() { destructor_ran = true; }
@@ -401,6 +449,15 @@ int TestOptional()
 		VERIFY(v == sorted);
 	}
 
+	// Test constructor call for non trivial class
+	{
+		static_assert(!is_trivially_destructible_v<non_trivial_test>, "non_trivial_test<> must not trivial");
+		optional<non_trivial_test> o1 = non_trivial_test();
+		non_trivial_test::reset();
+		optional<non_trivial_test> o2(o1);
+		VERIFY(non_trivial_test::constructor_ran);
+	}
+
 	// test destructors being called.
 	{
 		destructor_test::reset();
@@ -430,6 +487,195 @@ int TestOptional()
 		} 
 		// destructor shouldn't be called as object wasn't constructed.
 		VERIFY(!destructor_test::destructor_ran);
+	}
+
+	// test assignments called destructor & assignment operator or just constructor, depending
+	// if optional has been previously initialized or not.
+	{
+		static_assert(is_trivially_destructible_v<trivial_test>, "class_test must be trivial");
+		// Assignment a value to a already initialized optional
+		{
+			eastl::optional<trivial_test> o = trivial_test{};
+			trivial_test other;
+			trivial_test::reset();
+			o = other;
+			VERIFY(trivial_test::assignment_ran);
+			trivial_test::reset();
+		}
+
+		{
+			eastl::optional<non_trivial_test> o = non_trivial_test{};
+			non_trivial_test other;
+			non_trivial_test::reset();
+			o = other;
+			VERIFY(non_trivial_test::assignment_ran);
+			VERIFY(!non_trivial_test::destructor_ran);
+			non_trivial_test::reset();
+		}
+		VERIFY(non_trivial_test::destructor_ran);
+
+		// Assignment a value to empty optional
+		{
+			eastl::optional<trivial_test> o;
+			trivial_test other;
+			trivial_test::reset();
+			o = other;
+			VERIFY(trivial_test::constructor_ran);
+			VERIFY(!trivial_test::assignment_ran);
+			trivial_test::reset();
+		}
+
+		{
+			eastl::optional<non_trivial_test> o;
+			non_trivial_test other;
+			non_trivial_test::reset();
+			o = other;
+			VERIFY(non_trivial_test::constructor_ran);
+			VERIFY(!non_trivial_test::assignment_ran);
+			VERIFY(!non_trivial_test::destructor_ran);
+			non_trivial_test::reset();
+		}
+		VERIFY(non_trivial_test::destructor_ran);
+
+		// Assignment an optional non empty to a already initialized optional
+		{
+			eastl::optional<trivial_test> o = trivial_test{};
+			eastl::optional<trivial_test> other = trivial_test{};
+			trivial_test::reset();
+			o = other;
+			VERIFY(trivial_test::assignment_ran);
+			trivial_test::reset();
+		}
+
+		{
+			eastl::optional<non_trivial_test> o = non_trivial_test{};
+			eastl::optional<non_trivial_test> other = non_trivial_test{};
+			non_trivial_test::reset();
+			o = other;
+			VERIFY(non_trivial_test::assignment_ran);
+			VERIFY(!non_trivial_test::destructor_ran);
+			non_trivial_test::reset();
+		}
+		VERIFY(non_trivial_test::destructor_ran);
+
+		// Assignment an optional non empty to empty optional
+		{
+			eastl::optional<trivial_test> o;
+			eastl::optional<trivial_test> other = trivial_test{};
+			trivial_test::reset();
+			o = other;
+			VERIFY(trivial_test::constructor_ran);
+			VERIFY(!trivial_test::assignment_ran);
+			trivial_test::reset();
+		}
+
+		{
+			eastl::optional<non_trivial_test> o;
+			eastl::optional<non_trivial_test> other = non_trivial_test{};
+			non_trivial_test::reset();
+			o = other;
+			VERIFY(non_trivial_test::constructor_ran);
+			VERIFY(!non_trivial_test::assignment_ran);
+			VERIFY(!non_trivial_test::destructor_ran);
+			non_trivial_test::reset();
+		}
+		VERIFY(non_trivial_test::destructor_ran);
+
+		// Move an value to a already initialized optional
+		{
+			eastl::optional<trivial_test> o = trivial_test{};
+			eastl::optional<trivial_test> other = trivial_test{};
+			trivial_test::reset();
+			o = std::move(other);
+			VERIFY(trivial_test::assignment_ran);
+			VERIFY(trivial_test::was_moved);
+			trivial_test::reset();
+		}
+
+		{
+			eastl::optional<non_trivial_test> o = non_trivial_test{};
+			eastl::optional<non_trivial_test> other = non_trivial_test{};
+			non_trivial_test::reset();
+			o = std::move(other);
+			VERIFY(non_trivial_test::assignment_ran);
+			VERIFY(!non_trivial_test::destructor_ran);
+			VERIFY(non_trivial_test::was_moved);
+			non_trivial_test::reset();
+		}
+		VERIFY(non_trivial_test::destructor_ran);
+
+		// Move an value to empty optional
+		{
+			eastl::optional<trivial_test> o;
+			trivial_test other{};
+			trivial_test::reset();
+			o = std::move(other);
+			VERIFY(trivial_test::constructor_ran);
+			VERIFY(!trivial_test::assignment_ran);
+			VERIFY(trivial_test::was_moved);
+			trivial_test::reset();
+		}
+
+		{
+			eastl::optional<non_trivial_test> o;
+			non_trivial_test other{};
+			non_trivial_test::reset();
+			o = std::move(other);
+			VERIFY(non_trivial_test::constructor_ran);
+			VERIFY(!non_trivial_test::assignment_ran);
+			VERIFY(!non_trivial_test::destructor_ran);
+			VERIFY(non_trivial_test::was_moved);
+			non_trivial_test::reset();
+		}
+		VERIFY(non_trivial_test::destructor_ran);
+
+		// Move an optional non empty to a already initialized optional
+		{
+			eastl::optional<trivial_test> o = trivial_test{};
+			trivial_test other{};
+			trivial_test::reset();
+			o = std::move(other);
+			VERIFY(trivial_test::assignment_ran);
+			VERIFY(trivial_test::was_moved);
+			trivial_test::reset();
+		}
+
+		{
+			eastl::optional<non_trivial_test> o = non_trivial_test{};
+			non_trivial_test other{};
+			non_trivial_test::reset();
+			o = std::move(other);
+			VERIFY(non_trivial_test::assignment_ran);
+			VERIFY(!non_trivial_test::destructor_ran);
+			VERIFY(non_trivial_test::was_moved);
+			non_trivial_test::reset();
+		}
+		VERIFY(non_trivial_test::destructor_ran);
+
+		// Move an optional non empty to empty optional
+		{
+			eastl::optional<trivial_test> o;
+			eastl::optional<trivial_test> other = trivial_test{};
+			trivial_test::reset();
+			o = std::move(other);
+			VERIFY(trivial_test::constructor_ran);
+			VERIFY(!trivial_test::assignment_ran);
+			VERIFY(trivial_test::was_moved);
+			trivial_test::reset();
+		}
+
+		{
+			eastl::optional<non_trivial_test> o;
+			eastl::optional<non_trivial_test> other = non_trivial_test{};
+			non_trivial_test::reset();
+			o = std::move(other);
+			VERIFY(non_trivial_test::constructor_ran);
+			VERIFY(!non_trivial_test::assignment_ran);
+			VERIFY(!non_trivial_test::destructor_ran);
+			VERIFY(non_trivial_test::was_moved);
+			non_trivial_test::reset();
+		}
+		VERIFY(non_trivial_test::destructor_ran);
 	}
 
 	// optional rvalue tests
@@ -499,7 +745,7 @@ int TestOptional()
 
 			o2 = eastl::move(o1);
 
-			VERIFY(!!o1 == false);
+			VERIFY(!!o1 == true);
 			VERIFY(!!o2 == true);
 			VERIFY(o2->ptr.get() != nullptr);
 		}

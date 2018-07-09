@@ -83,7 +83,6 @@ namespace eastl
 
 			inline optional_storage() EA_NOEXCEPT : empty_val('\0') {}
 
-			template<typename TT = T, typename = eastl::enable_if_t<eastl::is_copy_constructible_v<TT>>>
 			inline optional_storage(const optional_storage& other) : engaged(other.engaged) 
 			{
 				auto* pOtherValue = reinterpret_cast<const T*>(eastl::addressof(other.val));
@@ -108,11 +107,17 @@ namespace eastl
 				// engaged = false;  // probably not needed as we are destroying the object
 			}
 
-			template<typename TT = T, typename = eastl::enable_if_t<eastl::is_copy_constructible_v<TT>>>
-			inline optional_storage& operator=(const optional_storage& other) 
+			inline optional_storage& operator=(const value_type& v) 
 			{
-				auto* pOtherValue = reinterpret_cast<const T*>(eastl::addressof(other.val));
-				::new (eastl::addressof(val)) value_type(*pOtherValue);
+				auto* pValue = reinterpret_cast<T*>(eastl::addressof(val));
+				*pValue = v;
+				return *this;
+			}
+
+			inline optional_storage& operator=(value_type&& v) 
+			{
+				auto* pValue = reinterpret_cast<T*>(eastl::addressof(val));
+				*pValue = std::move(v);
 				return *this;
 			}
 
@@ -182,10 +187,17 @@ namespace eastl
 			//         destruct_value();
 			// }
 
-			inline optional_storage& operator=(const optional_storage& other) 
+			inline optional_storage& operator=(const value_type& v) 
 			{
-				auto* pOtherValue = reinterpret_cast<const T*>(eastl::addressof(other.val));
-				::new (eastl::addressof(val)) value_type(*pOtherValue);
+				auto* pValue = reinterpret_cast<T*>(eastl::addressof(val));
+				*pValue = v;
+				return *this;
+			}
+
+			inline optional_storage& operator=(value_type&& v) 
+			{
+				auto* pValue = reinterpret_cast<T*>(eastl::addressof(val));
+				*pValue = std::move(v);
 				return *this;
 			}
 
@@ -253,8 +265,8 @@ namespace eastl
 		{
 			engaged = other.engaged;
 
-			auto* pOtherStorage = reinterpret_cast<const base_type*>(eastl::addressof(other.val));
-			base_type::operator=(*pOtherStorage);  
+			auto* pOtherValue = reinterpret_cast<const T*>(eastl::addressof(other.val));
+			::new (eastl::addressof(val)) value_type(*pOtherValue);
 		}
 
 	    optional(optional&& other)
@@ -294,27 +306,46 @@ namespace eastl
 		    return *this;
 	    }
 
-	    inline optional& operator=(const optional& other) 
-		{
-			engaged = other.engaged;
 
-			auto* pOtherStorage = reinterpret_cast<const base_type*>(eastl::addressof(other.val));
-			base_type::operator=(*pOtherStorage);  
+		inline optional& operator=(const optional& other) 
+		{
+			if(other.engaged)
+			{
+				auto* pOtherValue = reinterpret_cast<const T*>(eastl::addressof(other.val));
+				if(!engaged)
+				{
+					construct_value(*pOtherValue);
+					engaged = true;
+				}
+				else
+					base_type::operator=(*pOtherValue);
+			}
+			else
+				reset();
 
 			return *this;
 		}
 
-	    inline optional& operator=(optional&& other)
-	        EA_NOEXCEPT_IF(EA_NOEXCEPT(eastl::is_nothrow_move_assignable<value_type>::value &&
-	                                       eastl::is_nothrow_move_constructible<value_type>::value))
-	    {
-			eastl::swap(engaged, other.engaged);
+		inline optional& operator=(optional&& other)
+			EA_NOEXCEPT_IF(EA_NOEXCEPT(eastl::is_nothrow_move_assignable<value_type>::value &&
+										eastl::is_nothrow_move_constructible<value_type>::value))
+		{
+			if(other.engaged)
+			{
+				auto* pOtherValue = reinterpret_cast<T*>(eastl::addressof(other.val));
+				if(!engaged)
+				{
+					construct_value(eastl::move(*pOtherValue));
+					engaged = true;
+				}
+				else
+					base_type::operator=(eastl::move(*pOtherValue));
+			}
+			else
+				reset();
 
-			auto* pOtherValue = reinterpret_cast<T*>(eastl::addressof(other.val));
-			::new (eastl::addressof(val)) value_type(eastl::move(*pOtherValue));
-
-		    return *this;
-	    }
+			return *this;
+		}
 
 	    template <class U, typename = typename eastl::enable_if<eastl::is_same<eastl::decay_t<U>, T>::value>::type>
 	    inline optional& operator=(U&& u)
